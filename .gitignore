@@ -1,0 +1,28 @@
+# Sanal ortam
+venv/
+*.venv
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Buyuk veri dosyalari (CICIDS2017 - halka acik, repoya konmaz)
+MachineLearningCVE/
+*.csv
+
+# Egitilmis model dosyalari (buyuk, yeniden uretilebilir)
+*.pkl
+
+# Calisma loglari
+system.log
+*.log
+
+# Isletim sistemi / editor
+.DS_Store
+.vscode/
+.idea/
+Thumbs.db
+
+# Sifre listeleri (demo araci, repoya konmaz)
+sifreler.txt
