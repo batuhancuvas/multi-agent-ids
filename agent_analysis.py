@@ -2,8 +2,8 @@
 # ANALIZ AJANI: RF + IF modellerini calistirir, agirlikli oylamayla
 # risk skoru uretir. AYRICA davranissal kural katmani:
 #   - YUKSEK: port tarama (10+ port) veya SSH brute-force (port 22'ye 5+)
-#   - ORTA:   low-and-slow (az sayida porta yavas/tekrarli erisim, kurallari
-#             tetiklemeyen ama supheli desen) -> Isolation Forest mantigi
+#             EK SINYAL: auth.log'daki basarisiz giris sayisi
+#   - ORTA:   low-and-slow (az sayida porta yavas/tekrarli erisim)
 # 3 katmanli tespit: RF (imza) + IF (anomali) + kural (davranis).
 
 import joblib
@@ -55,8 +55,16 @@ class AnalysisAgent:
         if distinct_ports >= 10:
             return "YUKSEK", f"Port tarama ({distinct_ports} farkli port)"
         # KURAL 2: SSH brute-force - port 22'ye cok baglanti
+        # EK SINYAL: auth.log'daki basarisiz giris sayisi da dikkate alinir.
+        # Iki kaynak birlestirilir: ag trafigi (port 22) + sistem logu (auth.log)
+        auth_fails = message.get("auth_failures", 0)
         if port == 22 and total_conns >= 5:
+            if auth_fails > 0:
+                return "YUKSEK", f"SSH brute-force (port 22'ye {total_conns} baglanti, auth.log'da {auth_fails} basarisiz giris)"
             return "YUKSEK", f"SSH brute-force (port 22'ye {total_conns} deneme)"
+        # auth.log tek basina da guclu sinyal: cok sayida basarisiz giris
+        if auth_fails >= 5:
+            return "YUKSEK", f"SSH brute-force (auth.log'da {auth_fails} basarisiz giris)"
 
         # --- ORTA seviye kural (low-and-slow / sinsi sizma) ---
         # Az sayida (2-9) farkli porta, tekrarli erisim: bariz tarama degil

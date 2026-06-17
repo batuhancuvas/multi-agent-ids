@@ -2,7 +2,7 @@
 # CANLI IZLEME AJANI (demo icin).
 # scapy ile gercek trafigi yakalar, paketleri AKISLARA (flow) gruplar,
 # her akis icin 15 ozelligi hesaplar ve analiz->karar->mudahale
-# zincirinden gecirir. Ubuntu'da, root yetkisiyle calisir.
+# zincirinden gecirir. auth.log ek sinyali de mesaja eklenir.
 # DUSUK riskli (normal) trafigi tek tek basmaz, periyodik OZET basar.
 
 import time
@@ -13,10 +13,10 @@ from scapy.all import sniff, IP, TCP, UDP
 from agents_common import create_message, log_event
 from agent_analysis import AnalysisAgent
 from agent_response import DecisionAgent, ResponseAgent
+from agent_logwatch import LogWatchAgent
 
 IFACE = "enp0s8"
 FLOW_TIMEOUT = 2.0
-# Kac saniyede bir normal trafik ozeti basilsin
 SUMMARY_INTERVAL = 10.0
 
 class Flow:
@@ -88,10 +88,11 @@ class LiveMonitor:
         self.analysis = AnalysisAgent()
         self.decision = DecisionAgent()
         self.response = ResponseAgent(simulation=False)
+        self.logwatch = LogWatchAgent()   # auth.log ek sinyal ajani
         self.flows = defaultdict(lambda: None)
         self.flow_counter = 0
-        self.low_risk_count = 0          # DUSUK riskli (normal) akis sayaci
-        self.last_summary = time.time()  # son ozet zamani
+        self.low_risk_count = 0
+        self.last_summary = time.time()
         log_event("IZLEME", f"Canli izleme basladi. Arayuz: {IFACE}")
 
     def get_my_ip(self):
@@ -138,17 +139,18 @@ class LiveMonitor:
                 self.flow_counter += 1
                 feats = flow.to_features()
                 msg = create_message("IZLEME", self.flow_counter, flow.src_ip, features=feats)
+                # auth.log ek sinyali: bu IP'nin basarisiz SSH giris sayisi
+                self.logwatch.check()
+                msg["auth_failures"] = self.logwatch.get_total_failures(flow.src_ip)
                 dport = int(feats.get("Destination Port", 0))
                 if dport == 22 or dport in range(1, 1025):
                     self.response.note_attack_start(flow.src_ip, flow.start_time)
                 msg = self.analysis.analyze(msg)
                 msg = self.decision.decide(msg)
                 msg = self.response.act(msg)
-                # DUSUK riskli (normal) akislari say, ekrana basma
                 if msg["risk_level"] == "DUSUK":
                     self.low_risk_count += 1
 
-            # Periyodik ozet: belirli araliklarla normal trafigi ozetle
             if now - self.last_summary >= SUMMARY_INTERVAL:
                 if self.low_risk_count > 0:
                     log_event("IZLEME",
