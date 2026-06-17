@@ -1,35 +1,25 @@
-# agents_common.py
-# Amac: Tum ajanlarin ortak kullandigi yapilar.
-# - Mesaj formati (ajanlar birbirine bu formatla konusur)
-# - Ortak loglama
-# Bu dosya tek basina calistirilmaz; diger ajanlar bunu "import" eder.
-
 import time
 import json
 from datetime import datetime
 
-# --- Ajanlar arasi mesaj formati ---
-# Her ajan bir digerine bu sozluk (dict) yapisinda mesaj gonderir.
 def create_message(source_agent, flow_id, src_ip, features=None):
-    """Yeni bir trafik akisi mesaji olusturur (Izleme Ajani uretir)."""
+    """Creates a new traffic-flow message (produced by the Monitor agent)."""
     return {
-        "flow_id": flow_id,           # akisin kimligi
-        "src_ip": src_ip,             # trafigin geldigi IP
-        "timestamp": time.time(),     # akisin yakalandigi an (TTD/TTR icin)
-        "features": features or {},   # 15 ozellik (analiz ajani kullanir)
-        "source": source_agent,       # mesaji ureten ajan
-        # asagidakiler surec ilerledikce doldurulur:
-        "risk_score": None,           # analiz ajani doldurur
-        "risk_level": None,           # analiz ajani doldurur (DUSUK/ORTA/YUKSEK)
-        "decision": None,             # karar ajani doldurur (logla/uyar/blokla)
-        "action_result": None,        # mudahale ajani doldurur (basarili/basarisiz)
+        "flow_id": flow_id,
+        "src_ip": src_ip,
+        "timestamp": time.time(),
+        "features": features or {},
+        "source": source_agent,
+        "risk_score": None,
+        "risk_level": None,
+        "decision": None,
+        "action_result": None,
     }
 
-# --- Ortak loglama ---
 LOG_FILE = r"E:\ids-project\system.log"
 
 def log_event(agent_name, message):
-    """Tum ajanlar olaylari buraya yazar. Hem ekrana hem dosyaya."""
+    """All agents write events here, to both screen and file."""
     timestamp = datetime.now().strftime("%H:%M:%S")
     line = f"[{timestamp}] [{agent_name}] {message}"
     print(line)

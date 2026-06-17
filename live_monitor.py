@@ -1,10 +1,3 @@
-# live_monitor.py
-# CANLI IZLEME AJANI (demo icin).
-# scapy ile gercek trafigi yakalar, paketleri AKISLARA (flow) gruplar,
-# her akis icin 15 ozelligi hesaplar ve analiz->karar->mudahale
-# zincirinden gecirir. auth.log ek sinyali de mesaja eklenir.
-# DUSUK riskli (normal) trafigi tek tek basmaz, periyodik OZET basar.
-
 import time
 import threading
 from collections import defaultdict
@@ -20,7 +13,7 @@ FLOW_TIMEOUT = 2.0
 SUMMARY_INTERVAL = 10.0
 
 class Flow:
-    """Bir akisi (ayni kaynak-hedef-port grubu) temsil eder."""
+    """Represents a flow (same source-destination-port group)."""
     def __init__(self, src_ip):
         self.src_ip = src_ip
         self.start_time = time.time()
@@ -82,18 +75,17 @@ class Flow:
             "Flow IAT Min": iat_min,
         }
 
-
 class LiveMonitor:
     def __init__(self):
         self.analysis = AnalysisAgent()
         self.decision = DecisionAgent()
         self.response = ResponseAgent(simulation=False)
-        self.logwatch = LogWatchAgent()   # auth.log ek sinyal ajani
+        self.logwatch = LogWatchAgent()
         self.flows = defaultdict(lambda: None)
         self.flow_counter = 0
         self.low_risk_count = 0
         self.last_summary = time.time()
-        log_event("IZLEME", f"Canli izleme basladi. Arayuz: {IFACE}")
+        log_event("MONITOR", f"Live monitoring started. Interface: {IFACE}")
 
     def get_my_ip(self):
         return "192.168.56.103"
@@ -138,8 +130,7 @@ class LiveMonitor:
                     continue
                 self.flow_counter += 1
                 feats = flow.to_features()
-                msg = create_message("IZLEME", self.flow_counter, flow.src_ip, features=feats)
-                # auth.log ek sinyali: bu IP'nin basarisiz SSH giris sayisi
+                msg = create_message("MONITOR", self.flow_counter, flow.src_ip, features=feats)
                 self.logwatch.check()
                 msg["auth_failures"] = self.logwatch.get_total_failures(flow.src_ip)
                 dport = int(feats.get("Destination Port", 0))
@@ -148,23 +139,22 @@ class LiveMonitor:
                 msg = self.analysis.analyze(msg)
                 msg = self.decision.decide(msg)
                 msg = self.response.act(msg)
-                if msg["risk_level"] == "DUSUK":
+                if msg["risk_level"] == "LOW":
                     self.low_risk_count += 1
 
             if now - self.last_summary >= SUMMARY_INTERVAL:
                 if self.low_risk_count > 0:
-                    log_event("IZLEME",
-                              f"Normal trafik ozeti: {self.low_risk_count} akis "
-                              f"DUSUK risk olarak loglandi (engellenmedi)")
+                    log_event("MONITOR",
+                              f"Normal traffic summary: {self.low_risk_count} flows "
+                              f"logged as LOW risk (not blocked)")
                     self.low_risk_count = 0
                 self.last_summary = now
 
     def start(self):
         t = threading.Thread(target=self.evaluate_flows, daemon=True)
         t.start()
-        log_event("IZLEME", "Paketler yakalaniyor... (Ctrl+C ile durdur)")
+        log_event("MONITOR", "Capturing packets... (Ctrl+C to stop)")
         sniff(iface=IFACE, prn=self.process_packet, store=False)
-
 
 if __name__ == "__main__":
     monitor = LiveMonitor()

@@ -1,11 +1,3 @@
-# agent_analysis.py
-# ANALIZ AJANI: RF + IF modellerini calistirir, agirlikli oylamayla
-# risk skoru uretir. AYRICA davranissal kural katmani:
-#   - YUKSEK: port tarama (10+ port) veya SSH brute-force (port 22'ye 5+)
-#             EK SINYAL: auth.log'daki basarisiz giris sayisi
-#   - ORTA:   low-and-slow (az sayida porta yavas/tekrarli erisim)
-# 3 katmanli tespit: RF (imza) + IF (anomali) + kural (davranis).
-
 import joblib
 import numpy as np
 import pandas as pd
@@ -19,7 +11,7 @@ CFG_PATH = "/home/batu/ids-project/voting_config.pkl"
 
 class AnalysisAgent:
     def __init__(self):
-        log_event("ANALIZ", "Modeller yukleniyor...")
+        log_event("ANALYSIS", "Loading models...")
         self.rf = joblib.load(RF_PATH)
         self.iso = joblib.load(IF_PATH)
         cfg = joblib.load(CFG_PATH)
@@ -28,14 +20,14 @@ class AnalysisAgent:
         self.features = cfg["features"]
         self.ip_ports = defaultdict(set)
         self.ip_conn_count = defaultdict(int)
-        self.ip_first_time = {}          # IP ilk goruldugu zaman (low-and-slow icin)
-        self.flagged_ips = set()         # YUKSEK tehdit olarak isaretlenen IP'ler
-        self.warned_ips = set()          # ORTA (low-and-slow) olarak isaretlenen IP'ler
-        log_event("ANALIZ", "Hazir. RF + IF + davranis kurallari yuklendi.")
+        self.ip_first_time = {}
+        self.flagged_ips = set()
+        self.warned_ips = set()
+        log_event("ANALYSIS", "Ready. RF + IF + behavioral rules loaded.")
 
     def behavioral_check(self, message):
-        """Davranissal kurallar. Doner: (seviye, aciklama)
-        seviye: 'YUKSEK', 'ORTA' veya None"""
+        """Behavioral rules. Returns: (level, reason)
+        level: 'HIGH', 'MEDIUM' or None"""
         ip = message["src_ip"]
         feats = message["features"]
         port = int(feats.get("Destination Port", 0))
@@ -48,40 +40,30 @@ class AnalysisAgent:
 
         distinct_ports = len(self.ip_ports[ip])
         total_conns = self.ip_conn_count[ip]
-        elapsed = now - self.ip_first_time[ip]   # IP ne kadar suredir aktif
+        elapsed = now - self.ip_first_time[ip]
 
-        # --- YUKSEK seviye kurallar (bariz saldiri) ---
-        # KURAL 1: Port tarama - cok sayida FARKLI porta erisim
         if distinct_ports >= 10:
-            return "YUKSEK", f"Port tarama ({distinct_ports} farkli port)"
-        # KURAL 2: SSH brute-force - port 22'ye cok baglanti
-        # EK SINYAL: auth.log'daki basarisiz giris sayisi da dikkate alinir.
-        # Iki kaynak birlestirilir: ag trafigi (port 22) + sistem logu (auth.log)
+            return "HIGH", f"Port scan ({distinct_ports} distinct ports)"
         auth_fails = message.get("auth_failures", 0)
         if port == 22 and total_conns >= 5:
             if auth_fails > 0:
-                return "YUKSEK", f"SSH brute-force (port 22'ye {total_conns} baglanti, auth.log'da {auth_fails} basarisiz giris)"
-            return "YUKSEK", f"SSH brute-force (port 22'ye {total_conns} deneme)"
-        # auth.log tek basina da guclu sinyal: cok sayida basarisiz giris
+                return "HIGH", f"SSH brute-force ({total_conns} connections on port 22, {auth_fails} failed logins in auth.log)"
+            return "HIGH", f"SSH brute-force ({total_conns} attempts on port 22)"
         if auth_fails >= 5:
-            return "YUKSEK", f"SSH brute-force (auth.log'da {auth_fails} basarisiz giris)"
+            return "HIGH", f"SSH brute-force ({auth_fails} failed logins in auth.log)"
 
-        # --- ORTA seviye kural (low-and-slow / sinsi sizma) ---
-        # Az sayida (2-9) farkli porta, tekrarli erisim: bariz tarama degil
-        # ama normal kullanici da boyle davranmaz -> supheli, izlenmeli.
         if 2 <= distinct_ports < 10 and total_conns >= 3:
-            return "ORTA", f"Low-and-slow supheli erisim ({distinct_ports} port, {total_conns} baglanti)"
+            return "MEDIUM", f"Low-and-slow suspicious access ({distinct_ports} ports, {total_conns} connections)"
 
         return None, ""
 
     def analyze(self, message):
         ip = message["src_ip"]
 
-        # Zaten YUKSEK tehdit olarak isaretlendiyse, sessizce tekrar dondur
         if ip in self.flagged_ips:
             message["risk_score"] = 1.0
-            message["risk_level"] = "YUKSEK"
-            message["rf_label"] = "(zaten tespit edildi)"
+            message["risk_level"] = "HIGH"
+            message["rf_label"] = "(already detected)"
             return message
 
         feat_values = [[message["features"][f] for f in self.features]]
@@ -93,43 +75,39 @@ class AnalysisAgent:
         if_vote = 1 if if_raw == -1 else 0
         risk_score = self.W_RF * rf_vote + self.W_IF * if_vote
 
-        # Davranissal kural katmani
         rule_level, reason = self.behavioral_check(message)
-        if rule_level == "YUKSEK":
+        if rule_level == "HIGH":
             risk_score = 1.0
             message["rule_triggered"] = reason
             self.flagged_ips.add(ip)
-        elif rule_level == "ORTA":
-            # En az ORTA seviyeye cikar (IF zaten yuksekse dokunma)
+        elif rule_level == "MEDIUM":
             if risk_score < 0.3:
                 risk_score = 0.3
             message["rule_triggered"] = reason
 
         if risk_score >= 0.7:
-            level = "YUKSEK"
+            level = "HIGH"
         elif risk_score >= 0.3:
-            level = "ORTA"
+            level = "MEDIUM"
         else:
-            level = "DUSUK"
+            level = "LOW"
 
         message["risk_score"] = round(risk_score, 2)
         message["risk_level"] = level
         message["rf_label"] = rf_label
 
-        # ORTA ve YUKSEK ekrana basilir; DUSUK sessiz (live_monitor ozetler)
-        if level == "YUKSEK":
-            extra = f" | KURAL: {reason}" if rule_level else ""
-            log_event("ANALIZ",
-                      f"Akis {message['flow_id']} | RF={rf_label} "
-                      f"IF={'anomali' if if_vote else 'normal'} | "
-                      f"skor={risk_score:.2f} -> {level}{extra}")
-        elif level == "ORTA":
-            # ORTA icin tek uyari yeter (ayni IP'yi tekrar basma)
+        if level == "HIGH":
+            extra = f" | RULE: {reason}" if rule_level else ""
+            log_event("ANALYSIS",
+                      f"Flow {message['flow_id']} | RF={rf_label} "
+                      f"IF={'anomaly' if if_vote else 'normal'} | "
+                      f"score={risk_score:.2f} -> {level}{extra}")
+        elif level == "MEDIUM":
             if ip not in self.warned_ips:
                 self.warned_ips.add(ip)
-                extra = f" | KURAL: {reason}" if rule_level else ""
-                log_event("ANALIZ",
-                          f"Akis {message['flow_id']} | RF={rf_label} "
-                          f"IF={'anomali' if if_vote else 'normal'} | "
-                          f"skor={risk_score:.2f} -> {level}{extra}")
+                extra = f" | RULE: {reason}" if rule_level else ""
+                log_event("ANALYSIS",
+                          f"Flow {message['flow_id']} | RF={rf_label} "
+                          f"IF={'anomaly' if if_vote else 'normal'} | "
+                          f"score={risk_score:.2f} -> {level}{extra}")
         return message

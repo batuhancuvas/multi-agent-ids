@@ -1,42 +1,30 @@
-# agent_response.py
-# KARAR AJANI + MUDAHALE AJANI.
-# Mudahale ajani TTD (Time to Detect) ve TTR (Time to Respond) olcer:
-#   TTD = saldiri DAVRANISININ basladigi an -> tespit edildigi an
-#   TTR = tespit ani -> bloklama tamamlandigi an
-# Not: TTD, arka plan trafigini degil, saldiriyla ilgili ilk supheli
-# akisi baslangic alir (daha dogru olcum).
-
 import subprocess
 import time
 from agents_common import log_event
 
-# ---------------- KARAR AJANI ----------------
 class DecisionAgent:
     def decide(self, message):
         level = message["risk_level"]
-        if level == "YUKSEK":
-            decision = "BLOKLA"
-        elif level == "ORTA":
-            decision = "UYAR"
+        if level == "HIGH":
+            decision = "BLOCK"
+        elif level == "MEDIUM":
+            decision = "WARN"
         else:
-            decision = "LOGLA"
+            decision = "LOG"
         message["decision"] = decision
         return message
 
-
-# ---------------- MUDAHALE AJANI ----------------
 class ResponseAgent:
     def __init__(self, simulation=True):
         self.simulation = simulation
         self.blocked_ips = set()
         self.warned_ips = set()
-        # Her IP icin saldiri davranisinin ILK goruldugu an (TTD icin)
         self.attack_start = {}
-        mode = "SIMULASYON" if simulation else "GERCEK (iptables)"
-        log_event("MUDAHALE", f"Hazir. Mod: {mode}")
+        mode = "SIMULATION" if simulation else "REAL (iptables)"
+        log_event("RESPONSE", f"Ready. Mode: {mode}")
 
     def note_attack_start(self, ip, ts):
-        """Saldiri davranisi ilk goruldugunde cagrilir (sadece ilk seferde kaydeder)."""
+        """Called when attack behavior is first seen (records only the first time)."""
         if ip not in self.attack_start:
             self.attack_start[ip] = ts
 
@@ -44,34 +32,32 @@ class ResponseAgent:
         decision = message["decision"]
         ip = message["src_ip"]
 
-        if decision == "LOGLA":
-            message["action_result"] = "loglandi"
+        if decision == "LOG":
+            message["action_result"] = "logged"
 
-        elif decision == "UYAR":
+        elif decision == "WARN":
             if ip not in self.warned_ips:
                 self.warned_ips.add(ip)
-                log_event("MUDAHALE", f"UYARI: {ip} supheli (orta risk), izleniyor")
-            message["action_result"] = "uyari_uretildi"
+                log_event("RESPONSE", f"WARNING: {ip} suspicious (medium risk), monitoring")
+            message["action_result"] = "warning_raised"
 
-        elif decision == "BLOKLA":
+        elif decision == "BLOCK":
             if ip not in self.blocked_ips:
-                # --- TTD: saldiri davranisinin basladigi andan tespit anina kadar ---
                 detect_time = time.time()
                 start = self.attack_start.get(ip, detect_time)
                 ttd = detect_time - start
 
-                reason = message.get("rule_triggered", message.get("rf_label", "saldiri"))
-                log_event("MUDAHALE", f">>> THREAT DETECTED: {ip} | {reason}")
-                log_event("MUDAHALE", f">>> Time to Detect (TTD): {ttd:.3f} saniye")
+                reason = message.get("rule_triggered", message.get("rf_label", "attack"))
+                log_event("RESPONSE", f">>> THREAT DETECTED: {ip} | {reason}")
+                log_event("RESPONSE", f">>> Time to Detect (TTD): {ttd:.3f} seconds")
 
-                # --- TTR: tespit aninda bloklamayi baslat, suresini olc ---
                 t0 = time.time()
                 self._block_ip(ip)
                 ttr = time.time() - t0
 
-                log_event("MUDAHALE", f">>> ACTION: {ip} BLOCKED via iptables")
-                log_event("MUDAHALE", f">>> Time to Respond (TTR): {ttr*1000:.1f} ms")
-            message["action_result"] = "bloklandi"
+                log_event("RESPONSE", f">>> ACTION: {ip} BLOCKED via iptables")
+                log_event("RESPONSE", f">>> Time to Respond (TTR): {ttr*1000:.1f} ms")
+            message["action_result"] = "blocked"
 
         return message
 
@@ -86,7 +72,7 @@ class ResponseAgent:
                     check=True
                 )
             except Exception as e:
-                log_event("MUDAHALE", f"[ERROR] iptables failed: {e}")
+                log_event("RESPONSE", f"[ERROR] iptables failed: {e}")
 
     def is_blocked(self, ip):
         return ip in self.blocked_ips
