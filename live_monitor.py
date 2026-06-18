@@ -95,6 +95,9 @@ class LiveMonitor:
             return
         src = pkt[IP].src
         dst = pkt[IP].dst
+        IGNORED_IPS = {"192.168.56.100", "192.168.56.101", "192.168.56.102"}
+        if src in IGNORED_IPS or dst in IGNORED_IPS:
+            return
         my_ip = self.get_my_ip()
         dport = 0
         if pkt.haslayer(TCP):
