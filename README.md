@@ -10,7 +10,7 @@ A multi-agent network intrusion detection system (IDS) that detects attacks in r
 
 > **Course:** Computer and Network Security
 > **Author:** Batuhan Çuvaş
-> **Advisor:** Prof. Enis Karaarslan
+> **Advisor:** Enis Karaarslan
 
 ### Overview
 
@@ -121,7 +121,7 @@ Ağ saldırılarını gerçek zamanlı tespit eden ve saldırganın IP'sini otom
 
 > **Ders:** Computer and Network Security
 > **Hazırlayan:** Batuhan Çuvaş
-> **Danışman:** Prof. Enis Karaarslan
+> **Danışman:** Enis Karaarslan
 
 ### Genel Bakış
 
